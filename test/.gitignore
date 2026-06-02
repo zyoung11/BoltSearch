@@ -1,0 +1,7 @@
+./.venv
+./__pycache__
+./GoStarter
+./uv.lock
+__pycache__
+uv.lock
+README.md
