@@ -101,10 +101,10 @@ boltsearch add --title "标题" --content "正文内容"
 ### 搜索
 
 ```bash
-boltsearch search "关键词"
-boltsearch search "小米 处理器" --mode and
-boltsearch search "处理" --prefix
-boltsearch search "programming" -n 20
+boltsearch search "xxx"
+boltsearch search "xxx" --mode and
+boltsearch search "xxx" --prefix
+boltsearch search "xxx" -n 20
 ```
 
 ### 删除
@@ -132,7 +132,7 @@ boltsearch stats
 ### 词项补全
 
 ```bash
-boltsearch suggest xx
+boltsearch suggest xxx
 boltsearch suggest pro -n 15
 ```
 
@@ -147,7 +147,7 @@ boltsearch browse index -n 50      # 查看倒排索引
 ### 启动 API 服务
 
 ```bash
-boltsearch serve --addr :8080
+boltsearch serve --addr 8080
 ```
 
 ### 通用选项

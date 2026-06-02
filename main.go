@@ -89,7 +89,7 @@ func usage() {
 		{"init", "", "初始化空数据库"},
 		{"add", "   " + cFlag + "--title T --content C" + cRst, "手动添加文档"},
 		{"browse", " " + cFlag + "[<bucket>]" + cRst, "浏览数据库内容"},
-		{"serve", " " + cFlag + " [--addr :8080]" + cRst, "启动 RESTful API 服务"},
+		{"serve", " " + cFlag + " [--addr 8080]" + cRst, "启动 RESTful API 服务"},
 	}
 
 	maxArgs := 0
@@ -831,7 +831,7 @@ func helpServe() {
 		"启动 RESTful API 服务。",
 		nil,
 		[][3]string{
-			{cFlag + "--addr <addr>" + cRst, "", "监听地址 (默认: :8080)"},
+			{cFlag + "--addr <addr>" + cRst, "", "监听端口 (默认: 8080)"},
 			{cFlag + "--db <path>" + cRst, "", "数据库路径 (默认: ./search.db)"},
 		})
 }
@@ -925,6 +925,9 @@ func cmdServe(args []string) {
 	for i < len(args) {
 		if args[i] == "--addr" && i+1 < len(args) {
 			addr = args[i+1]
+			if !strings.HasPrefix(addr, ":") {
+				addr = ":" + addr
+			}
 			i += 2
 			continue
 		}
@@ -947,14 +950,33 @@ func cmdServe(args []string) {
 
 	log.Info(fmt.Sprintf("API 服务启动: http://localhost%s", addr))
 	log.Info("端点:")
-	fmt.Println("  POST   /api/index         上传 JSONL 文件 (multipart file)")
-	fmt.Println("  GET    /api/search?q=      搜索")
-	fmt.Println("  GET    /api/docs/:id       获取文档")
-	fmt.Println("  DELETE /api/docs/:id       删除文档")
-	fmt.Println("  GET    /api/stats          统计")
-	fmt.Println("  GET    /api/suggest?prefix= 自动补全")
-	fmt.Println("  GET    /api/browse         浏览 Bucket 列表")
-	fmt.Println("  GET    /api/browse?bucket=  浏览 Bucket 内容")
+
+	endpoints := []struct{ m, p, d string }{
+		{"POST", "/api/index", "上传 JSONL 文件"},
+		{"POST", "/api/docs", "添加单篇文档"},
+		{"GET", "/api/search?q=", "搜索"},
+		{"GET", "/api/docs/:id", "获取文档"},
+		{"DELETE", "/api/docs/:id", "删除文档"},
+		{"GET", "/api/stats", "统计"},
+		{"GET", "/api/suggest?prefix=", "自动补全"},
+		{"GET", "/api/browse", "Bucket 列表"},
+		{"GET", "/api/browse?bucket=", "Bucket 内容"},
+	}
+
+	maxP := 0
+	for _, e := range endpoints {
+		w := lipgloss.Width(e.p)
+		if w > maxP {
+			maxP = w
+		}
+	}
+	for _, e := range endpoints {
+		pad := maxP - lipgloss.Width(e.p)
+		if pad < 0 {
+			pad = 0
+		}
+		fmt.Printf("  %-6s %s%s %s\n", e.m, e.p, strings.Repeat(" ", pad), e.d)
+	}
 	fmt.Println()
 
 	if err := app.Listen(addr); err != nil {
