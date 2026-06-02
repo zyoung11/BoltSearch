@@ -12,17 +12,22 @@
 <div id="app">
   <header>
     <h1>BoltSearch</h1>
+    <nav id="tabs">
+      <span class="tab active" data-page="search">搜索</span>
+      <span class="tab" data-page="docs">API 文档</span>
+    </nav>
     <div id="stats">
       <span class="stat">加载中…</span>
     </div>
   </header>
 
+  <div id="page-search" class="page active">
   <main>
     <div id="search-box">
       <div id="search-opts">
         <label><input type="radio" name="mode" value="or" checked> OR</label>
         <label><input type="radio" name="mode" value="and"> AND</label>
-        <label><input type="checkbox" id="prefix"> 前缀</label>
+        <label><input type="checkbox" id="prefix" checked> 前缀</label>
         <select id="limit">
           <option>5</option><option selected>10</option><option>20</option><option>50</option>
         </select>
@@ -40,7 +45,86 @@
     <h3>数据库</h3>
     <div id="buckets"></div>
     <div id="browse-detail"></div>
+    <h3 style="margin-top:16px">添加文档</h3>
+    <div id="add-form">
+      <input type="text" id="add-title" placeholder="标题" class="add-input">
+      <textarea id="add-content" placeholder="正文内容…" class="add-input" rows="3"></textarea>
+      <button id="add-btn">添加</button>
+      <div id="add-msg"></div>
+    </div>
   </aside>
+</div>
+
+<div id="page-docs" class="page">
+  <div class="docs-content">
+    <h2>API 文档</h2>
+    <p>BoltSearch 提供 RESTful API，所有端点基于 <code>http://localhost:8080/api</code>。</p>
+
+    <h3>端点列表</h3>
+    <table class="docs-table">
+      <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td class="method post">POST</td><td>/api/index</td><td>上传 JSONL 文件，自动索引并去重</td></tr>
+        <tr><td class="method post">POST</td><td>/api/docs</td><td>添加单篇文档，重复返回 409</td></tr>
+        <tr><td class="method get">GET</td><td>/api/search</td><td>全文搜索，支持 BM25 评分</td></tr>
+        <tr><td class="method get">GET</td><td>/api/docs/:id</td><td>获取指定文档</td></tr>
+        <tr><td class="method del">DELETE</td><td>/api/docs/:id</td><td>删除文档及关联索引</td></tr>
+        <tr><td class="method get">GET</td><td>/api/stats</td><td>数据库统计信息</td></tr>
+        <tr><td class="method get">GET</td><td>/api/suggest</td><td>词项自动补全</td></tr>
+        <tr><td class="method get">GET</td><td>/api/browse</td><td>浏览 Bucket 列表或内容</td></tr>
+      </tbody>
+    </table>
+
+    <h3>POST /api/index</h3>
+    <p>上传 <code>.jsonl</code> 文件批量索引。请求类型 <code>multipart/form-data</code>，字段名 <code>file</code>。自动跳过重复文档。</p>
+    <pre>curl -F "file=@data.jsonl" http://localhost:8080/api/index</pre>
+    <p>响应: <code>{"indexed": 10, "summary": "（新增 10 篇）"}</code></p>
+
+    <h3>POST /api/docs</h3>
+    <p>添加单篇文档。请求体 <code>application/json</code>。</p>
+    <pre>curl -X POST http://localhost:8080/api/docs \
+  -H "Content-Type: application/json" \
+  -d '{"title":"标题","content":"正文"}'</pre>
+    <p>成功 201: <code>{"docID": 11}</code> | 重复 409: <code>{"error":"文档已存在","duplicate":true}</code></p>
+
+    <h3>GET /api/search</h3>
+    <p>全文搜索。支持 BM25 评分排序。</p>
+    <table class="docs-table">
+      <thead><tr><th>参数</th><th>默认</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>q</td><td>必填</td><td>查询关键词</td></tr>
+        <tr><td>mode</td><td>or</td><td>搜索模式: or / and</td></tr>
+        <tr><td>limit</td><td>10</td><td>返回条数</td></tr>
+        <tr><td>offset</td><td>0</td><td>分页偏移</td></tr>
+        <tr><td>prefix</td><td>false</td><td>启用前缀匹配</td></tr>
+      </tbody>
+    </table>
+    <pre>curl "http://localhost:8080/api/search?q=处理器&mode=and&prefix=true&limit=5"</pre>
+
+    <h3>GET /api/suggest</h3>
+    <p>词项自动补全，基于索引 Bucket 前缀扫描。</p>
+    <table class="docs-table">
+      <thead><tr><th>参数</th><th>默认</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>prefix</td><td>必填</td><td>前缀</td></tr>
+        <tr><td>limit</td><td>20</td><td>返回数量</td></tr>
+      </tbody>
+    </table>
+
+    <h3>GET /api/browse</h3>
+    <p>无参数时返回所有 Bucket 列表（name/desc/count）。指定 <code>?bucket=name</code> 时返回 Bucket 内容表格（headers + rows 数组）。</p>
+    <pre>curl "http://localhost:8080/api/browse?bucket=docs&limit=50"</pre>
+
+    <h3>GET /api/stats</h3>
+    <p>返回 <code>TotalDocs</code> / <code>TotalTokens</code> / <code>AvgDocLen</code> / <code>UniqueTerms</code> / <code>DBFileSize</code>。</p>
+
+    <h3>DELETE /api/docs/:id</h3>
+    <p>删除指定文档，自动清理倒排索引、文档频率、去重哈希。</p>
+    <pre>curl -X DELETE http://localhost:8080/api/docs/5</pre>
+
+    <h3>前端交互说明</h3>
+    <p>本页面使用 <b>HTMX</b>（部分交互）和原生 <b>Fetch API</b> 与 BoltSearch 后端通信。页面加载时自动调用 <code>POST /api/index</code> 导入 10 篇示例数据。搜索框实时调用 <code>GET /api/suggest</code> 获取补全建议，提交时调用 <code>GET /api/search</code>。右侧栏通过 <code>GET /api/browse</code> 加载 Bucket 列表，点击 Bucket 调用 <code>GET /api/browse?bucket=</code> 查看详细表格数据。添加和删除分别调用 <code>POST /api/docs</code> 和 <code>DELETE /api/docs/:id</code>。头部统计每 5 秒轮询 <code>GET /api/stats</code> 更新。</p>
+  </div>
 </div>
 
 <div id="toast"></div>
@@ -73,7 +157,7 @@ async function seed() {
     const d = await r.json();
     toast.textContent = '导入完成：' + d.indexed + ' 篇文档' + (d.summary||'');
   } catch(e) { toast.textContent = '请先启动 boltsearch serve'; }
-  setTimeout(() => toast.className = '', 3000);
+  setTimeout(() => { toast.className = ''; toast.textContent = ''; }, 3000);
   loadStats(); loadBuckets();
 }
 
@@ -148,10 +232,40 @@ function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
 function trunc(s,n) { return s.length > n ? s.slice(0,n) + '…' : s; }
 
 document.getElementById('search-btn').onclick = doSearch;
-document.getElementById('query').onkeydown = function(e) { if(e.key==='Enter') doSearch(); };
+document.getElementById('query').onkeydown = function(e) {
+  const items = document.querySelectorAll('#suggestions span');
+  if (e.key === 'Enter') {
+    const active = document.querySelector('#suggestions span.active');
+    if (active) {
+      e.preventDefault();
+      document.getElementById('query').value = active.textContent;
+      document.getElementById('suggestions').innerHTML = '';
+    }
+    doSearch();
+    return;
+  }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (items.length === 0) return;
+    let idx = -1;
+    items.forEach((el,i) => { if (el.classList.contains('active')) idx = i; });
+    items.forEach(el => el.classList.remove('active'));
+    if (e.key === 'ArrowDown') idx = (idx + 1) % items.length;
+    else idx = idx <= 0 ? items.length - 1 : idx - 1;
+    items[idx].classList.add('active');
+  }
+  if (e.key === 'Tab') {
+    if (items.length === 0) return;
+    e.preventDefault();
+    const active = document.querySelector('#suggestions span.active');
+    const target = active || items[0];
+    document.getElementById('query').value = target.textContent;
+    document.getElementById('suggestions').innerHTML = '';
+  }
+};
 document.getElementById('query').oninput = suggest;
 
-document.addEventListener('click', function(e) {
+document.addEventListener('click', async function(e) {
   if (e.target.closest('#suggestions span')) {
     document.getElementById('query').value = e.target.textContent;
     document.getElementById('suggestions').innerHTML = '';
@@ -160,7 +274,13 @@ document.addEventListener('click', function(e) {
   if (!e.target.closest('#search-box')) document.getElementById('suggestions').innerHTML = '';
   if (e.target.closest('.delete-btn')) {
     const id = e.target.closest('.delete-btn').dataset.id;
-    fetch(API + '/docs/' + id, {method:'DELETE'}).then(() => { doSearch(); loadStats(); loadBuckets(); });
+    await fetch(API + '/docs/' + id, {method:'DELETE'});
+    doSearch(); loadStats(); loadBuckets();
+    const cur = document.querySelector('#browse-detail h4');
+    if (cur) {
+      const name = cur.textContent.split(' ')[0];
+      document.querySelector(`[data-bucket="${name}"]`).click();
+    }
   }
   if (e.target.closest('.bucket-row')) {
     const name = e.target.closest('.bucket-row').dataset.bucket;
@@ -199,7 +319,46 @@ document.addEventListener('click', function(e) {
   }
 });
 
+document.getElementById('add-btn').onclick = async function() {
+  const title = document.getElementById('add-title').value.trim();
+  const content = document.getElementById('add-content').value.trim();
+  const msg = document.getElementById('add-msg');
+  if (!title || !content) { msg.textContent = '标题和内容不能为空'; return; }
+  msg.textContent = '添加中…';
+  try {
+    const r = await fetch(API + '/docs', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({title, content})
+    });
+    const d = await r.json();
+    if (r.status === 201) {
+      msg.textContent = '已添加 DocID=' + d.docID;
+      document.getElementById('add-title').value = '';
+      document.getElementById('add-content').value = '';
+      loadStats(); loadBuckets();
+      const cur = document.querySelector('#browse-detail h4');
+      if (cur) {
+        const name = cur.textContent.split(' ')[0];
+        document.querySelector(`[data-bucket="${name}"]`).click();
+      }
+    } else {
+      msg.textContent = (d.error || '添加失败') + (d.duplicate ? ' (重复)' : '');
+    }
+  } catch(e) { msg.textContent = '连接失败'; }
+  setTimeout(() => msg.textContent = '', 3000);
+};
+
 document.addEventListener('DOMContentLoaded', seed);
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.onclick = function() {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    this.classList.add('active');
+    document.getElementById('page-' + this.dataset.page).classList.add('active');
+  };
+});
 </script>
 
 <div id="modal"><div id="modal-body"></div></div>
