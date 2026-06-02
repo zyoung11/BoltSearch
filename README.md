@@ -9,7 +9,6 @@
 - [CLI 使用](#cli-使用)
 - [API 文档](#api-文档)
 - [数据格式](#数据格式)
-- [项目结构](#项目结构)
 
 ## 原理
 
@@ -133,7 +132,7 @@ boltsearch stats
 ### 词项补全
 
 ```bash
-boltsearch suggest 骁龙
+boltsearch suggest xx
 boltsearch suggest pro -n 15
 ```
 
