@@ -313,15 +313,10 @@ func (e *SearchEngine) ScanBucket(bucketName string) ([]string, [][]string, erro
 				id := decUint64(k)
 				var doc Document
 				msgpack.Unmarshal(v, &doc)
-				title := doc.Title
-				content := doc.Content
-				if len([]rune(content)) > 60 {
-					content = string([]rune(content)[:60]) + "..."
-				}
 				rows = append(rows, []string{
 					fmt.Sprintf("%d", id),
-					title,
-					content,
+					doc.Title,
+					doc.Content,
 				})
 				return nil
 			})

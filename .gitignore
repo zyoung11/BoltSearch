@@ -3,3 +3,4 @@ boltcli
 *.db
 *jsonl
 boltsearch
+demo/demo-server

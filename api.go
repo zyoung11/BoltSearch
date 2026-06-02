@@ -7,12 +7,17 @@ import (
 	"boltsearch/engine"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
 )
 
 func setupAPI(eng *engine.SearchEngine) *fiber.App {
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
+
+	app.Use(cors.New())
+	app.Use(logger.New())
 
 	api := app.Group("/api")
 
@@ -160,20 +165,11 @@ func setupAPI(eng *engine.SearchEngine) *fiber.App {
 		if limit > 0 && limit < len(rows) {
 			rows = rows[:limit]
 		}
-		var result []fiber.Map
-		for _, row := range rows {
-			m := fiber.Map{}
-			for i, h := range headers {
-				if i < len(row) {
-					m[strings.ToLower(h)] = row[i]
-				}
-			}
-			result = append(result, m)
-		}
 		return c.JSON(fiber.Map{
-			"bucket": bucket,
-			"total":  total,
-			"rows":   result,
+			"bucket":  bucket,
+			"total":   total,
+			"headers": headers,
+			"rows":    rows,
 		})
 	})
 
