@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
@@ -78,5 +79,11 @@ func main() {
 	})
 
 	port := cfg.Port
+
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		openBrowser("http://127.0.0.1:3000")
+	}()
+
 	log.Fatal(app.Listen(fmt.Sprintf(":%d", port)))
 }
