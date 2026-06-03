@@ -1,14 +1,27 @@
+import json
 import requests
-from pathlib import Path
 from PAT import get, post, delete, run_test, show_result, print_info
 
 BASE = "http://127.0.0.1:8080"
-EXAMPLE = Path(__file__).parent.parent / "example.jsonl"
+
+DEMO = [
+    {"title": "小米14 Pro深度评测", "content": "小米14 Pro搭载高通骁龙8 Gen 3处理器，采用台积电4nm工艺。屏幕为6.73英寸1.5K分辨率AMOLED面板，支持120Hz LTPO自适应刷新率，峰值亮度3000nit。后置三摄：5000万像素主摄、5000万像素超广角、5000万像素长焦。电池4610mAh，支持90W有线快充和50W无线快充。"},
+    {"title": "华为Mate 60 Pro体验", "content": "华为Mate 60 Pro搭载自研麒麟9000S处理器，支持卫星通话和卫星消息。采用6.82英寸OLED四曲面屏，支持1-120Hz自适应刷新率。后置5000万像素主摄+1200万像素超广角+4800万像素长焦微距。电池4750mAh，支持88W有线快充和50W无线快充。"},
+    {"title": "iPhone 15 Pro Max开箱", "content": "iPhone 15 Pro Max搭载A17 Pro芯片，基于台积电3nm工艺制造。采用6.7英寸Super Retina XDR OLED显示屏，支持ProMotion 120Hz自适应刷新率。后置4800万像素主摄+1200万像素超广角+1200万像素5倍长焦。首次采用USB-C接口，钛金属中框。"},
+    {"title": "Python编程入门指南", "content": "Python is a high-level, interpreted programming language known for its readability and simple syntax. It supports multiple programming paradigms including object-oriented, imperative, and functional programming."},
+    {"title": "Golang并发编程实战", "content": "Golang is a statically typed, compiled programming language designed at Google. Key features include goroutines for lightweight concurrency, channels for communication between goroutines, and a built-in garbage collector."},
+    {"title": "Rust语言入门与内存安全", "content": "Rust is a systems programming language focused on safety, speed, and concurrency. Its unique ownership system prevents memory errors at compile time without needing a garbage collector."},
+    {"title": "骁龙8 Gen 3 vs 天玑9300 性能对比", "content": "高通骁龙8 Gen 3采用1+5+2三丛集架构，Cortex-X4超大核主频3.3GHz，GPU为Adreno 750，台积电4nm工艺。安兔兔跑分约210万分。联发科天玑9300采用4个Cortex-X4超大核+4个Cortex-A720大核的激进设计，台积电4nm工艺。"},
+    {"title": "2024年最佳智能手机推荐", "content": "年度智能手机推荐榜单：小米14 Pro以出色的徕卡影像和骁龙8 Gen 3性能位居榜首。华为Mate 60 Pro凭借卫星通信和自研麒麟芯片获得特别推荐。iPhone 15 Pro Max以A17 Pro的强大性能和优秀的视频拍摄能力占据高端市场。"},
+    {"title": "Redis缓存设计与性能优化", "content": "Redis is an in-memory data structure store used as a database, cache, and message broker. Common data structures include strings, hashes, lists, sets, sorted sets, and streams."},
+    {"title": "PostgreSQL索引优化技巧", "content": "PostgreSQL supports multiple index types: B-tree for equality and range queries, Hash for simple equality, GiST for geometric and full-text search, GIN for array and JSONB queries, and BRIN for large tables with natural ordering."},
+]
 
 
 def test_index():
-    with EXAMPLE.open("rb") as f:
-        resp = requests.post(f"{BASE}/api/index", files={"file": f}, timeout=10)
+    jsonl = "\n".join(json.dumps(d, ensure_ascii=False) for d in DEMO)
+    files = {"file": ("demo.jsonl", jsonl.encode(), "application/jsonl")}
+    resp = requests.post(f"{BASE}/api/index", files=files, timeout=10)
     ok = 200 <= resp.status_code < 300
     status = "✅" if ok else "❌"
     content = resp.json() if ok else {"error": resp.text}
@@ -94,7 +107,7 @@ def test_empty_search():
 
 
 if __name__ == "__main__":
-    print_info("服务信息", {"URL": BASE, "数据文件": str(EXAMPLE)})
+    print_info("服务信息", {"URL": BASE})
 
     test_index()
     test_stats()
