@@ -1,6 +1,6 @@
 # BoltSearch
 
-基于 **BoltDB** 的轻量级全文搜索引擎，内置 **BM25** 评分、**中英文分词**、**RESTful API**。
+基于 **BoltDB** 的轻量级全文搜索引擎，内置 **BM25** 评分、**中英文分词**、**BK-Tree 模糊纠错**、**RESTful API**。
 
 ## 目录
 
@@ -28,9 +28,7 @@
 ### 分词流程
 
 ```
-输入文本 → 语言检测 → gse 中文分词 / 空格拆分英文
-        → 小写归一化 → snowball 词干提取(英文)
-        → 停用词过滤 → 标点/符号过滤 → []Token
+输入文本 → 语言检测 → gse 中文分词 / 空格拆分英文 → 小写归一化 → snowball 词干提取(英文) → 停用词过滤 → 标点/符号过滤 → []Token
 ```
 
 索引时和搜索时走**完全相同的分词流程**，保证一致性。
@@ -46,6 +44,18 @@ score(q,d) = Σ IDF(t) × (TF × (k1+1)) / (TF + k1×(1−b + b×|d|/avgdl))
 - `k1=1.2` 控制 TF 饱和速度
 - `b=0.75` 控制文档长度惩罚
 - `IDF(t)` 来自 `df` Bucket，稀有词得分高
+
+### 模糊搜索
+
+基于 **BK-Tree** + **Levenshtein 编辑距离**（以 Unicode 字符为单位，支持中英文）：
+
+- 精确命中时不走模糊路径，零开销
+- 未命中时查找编辑距离 ≤ 2 的候选词，用候选词走倒排索引
+- BK-Tree 在索引时增量构建，搜索路径纯读无写
+
+```
+查询 "pythom" → 精确未命中 → BK-Tree 找到 "python"(距离1) → 查 index["python"] → 返回结果
+```
 
 ### 操作模型
 
@@ -104,6 +114,7 @@ boltsearch add --title "标题" --content "正文内容"
 boltsearch search "xxx"
 boltsearch search "xxx" --mode and
 boltsearch search "xxx" --prefix
+boltsearch search "xxx" --fuzzy
 boltsearch search "xxx" -n 20
 ```
 
@@ -239,6 +250,7 @@ boltsearch serve --addr 8080
 | `limit` | int | `10` | 返回数量 |
 | `offset` | int | `0` | 偏移量 |
 | `prefix` | bool | `false` | 前缀匹配 |
+| `fuzzy` | bool | `false` | 模糊纠错 |
 
 **响应** `200`：
 
