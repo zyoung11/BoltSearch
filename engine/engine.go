@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/binary"
 	"fmt"
+	"sync"
 
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/boltdb/bolt"
@@ -24,6 +25,7 @@ type SearchEngine struct {
 	tokenizer *Tokenizer
 	bkTree    *bkNode
 	bkBuilt   bool
+	mu        sync.Mutex
 }
 
 func encUint64(v uint64) []byte {

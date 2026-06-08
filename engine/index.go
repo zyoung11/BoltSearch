@@ -86,6 +86,7 @@ func (e *SearchEngine) indexOne(doc Document) (uint64, error) {
 	}
 
 	var docID uint64
+	var newTerms []string
 	err := e.db.Update(func(tx *bolt.Tx) error {
 		hb := tx.Bucket([]byte(bucketHash))
 		if hb.Get(hash) != nil {
@@ -143,6 +144,9 @@ func (e *SearchEngine) indexOne(doc Document) (uint64, error) {
 			}
 
 			dfData := dfBucket.Get([]byte(term))
+			if dfData == nil {
+				newTerms = append(newTerms, term)
+			}
 			var df uint64
 			if dfData != nil {
 				df = decUint64(dfData)
@@ -155,6 +159,18 @@ func (e *SearchEngine) indexOne(doc Document) (uint64, error) {
 
 		return e.setMeta(tx, meta)
 	})
+	if err != nil {
+		return 0, err
+	}
 
-	return docID, err
+	if len(newTerms) > 0 {
+		e.mu.Lock()
+		e.ensureBKTree()
+		for _, t := range newTerms {
+			e.bkTree.insert(t)
+		}
+		e.mu.Unlock()
+	}
+
+	return docID, nil
 }

@@ -84,7 +84,7 @@ func (e *SearchEngine) Search(query string, mode string, limit int, offset int, 
 			}
 
 			if !collect(term) && fuzzy && !prefix {
-				e.buildBKTree()
+				e.ensureBKTree()
 				if e.bkTree != nil {
 					candidates := e.bkTree.search(term, 2)
 					for _, c := range candidates {
@@ -171,7 +171,8 @@ func (e *SearchEngine) Search(query string, mode string, limit int, offset int, 
 }
 
 func (e *SearchEngine) DeleteDocument(docID uint64) error {
-	return e.db.Update(func(tx *bolt.Tx) error {
+	var removed int
+	err := e.db.Update(func(tx *bolt.Tx) error {
 		docBucket := tx.Bucket([]byte(bucketDocs))
 		docData := docBucket.Get(encUint64(docID))
 		if docData == nil {
@@ -231,6 +232,7 @@ func (e *SearchEngine) DeleteDocument(docID uint64) error {
 				df := decUint64(dfData)
 				if df <= 1 {
 					dfBucket.Delete([]byte(term))
+					removed++
 				} else {
 					dfBucket.Put([]byte(term), encUint64(df-1))
 				}
@@ -251,6 +253,12 @@ func (e *SearchEngine) DeleteDocument(docID uint64) error {
 		meta.TotalTokens -= docLen
 		return e.setMeta(tx, meta)
 	})
+	if removed > 0 {
+		e.mu.Lock()
+		e.bkBuilt = false
+		e.mu.Unlock()
+	}
+	return err
 }
 
 func (e *SearchEngine) Stats() (Stats, error) {
@@ -434,4 +442,10 @@ func (e *SearchEngine) buildBKTree() {
 		})
 	})
 	e.bkBuilt = true
+}
+
+func (e *SearchEngine) ensureBKTree() {
+	if !e.bkBuilt {
+		e.buildBKTree()
+	}
 }
