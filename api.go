@@ -72,8 +72,9 @@ func setupAPI(eng *engine.SearchEngine) *fiber.App {
 		limit, _ := strconv.Atoi(c.Query("limit", "10"))
 		offset, _ := strconv.Atoi(c.Query("offset", "0"))
 		prefix := c.Query("prefix") == "true"
+		fuzzy := c.Query("fuzzy") == "true"
 
-		results, total, err := eng.Search(q, mode, limit, offset, prefix)
+		results, total, err := eng.Search(q, mode, limit, offset, prefix, fuzzy)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}

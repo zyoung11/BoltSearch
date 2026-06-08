@@ -19,9 +19,11 @@ const (
 )
 
 type SearchEngine struct {
-	db         *bolt.DB
-	dbPath     string
-	tokenizer  *Tokenizer
+	db        *bolt.DB
+	dbPath    string
+	tokenizer *Tokenizer
+	bkTree    *bkNode
+	bkBuilt   bool
 }
 
 func encUint64(v uint64) []byte {

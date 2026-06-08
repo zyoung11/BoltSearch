@@ -11,7 +11,7 @@ import (
 	"github.com/boltdb/bolt"
 )
 
-func (e *SearchEngine) Search(query string, mode string, limit int, offset int, prefix bool) ([]ScoredDoc, int, error) {
+func (e *SearchEngine) Search(query string, mode string, limit int, offset int, prefix bool, fuzzy bool) ([]ScoredDoc, int, error) {
 	tokens := e.tokenizer.Tokenize(query)
 	if len(tokens) == 0 {
 		return nil, 0, nil
@@ -46,36 +46,54 @@ func (e *SearchEngine) Search(query string, mode string, limit int, offset int, 
 
 		for _, term := range queryTerms {
 			var allPostings []Posting
+			termIDF := idf(N, 0)
 
-			if prefix {
-				c := idxBucket.Cursor()
-				for k, v := c.Seek([]byte(term)); k != nil && strings.HasPrefix(string(k), term); k, v = c.Next() {
+			collect := func(t string) bool {
+				var found bool
+				if prefix {
+					c := idxBucket.Cursor()
+					for k, v := c.Seek([]byte(t)); k != nil && strings.HasPrefix(string(k), t); k, v = c.Next() {
+						var pl PostingList
+						if err := msgpack.Unmarshal(v, &pl); err != nil {
+							continue
+						}
+						allPostings = append(allPostings, pl.Postings...)
+						found = true
+					}
+				} else {
+					plData := idxBucket.Get([]byte(t))
+					if plData == nil {
+						return false
+					}
 					var pl PostingList
-					if err := msgpack.Unmarshal(v, &pl); err != nil {
-						continue
+					if err := msgpack.Unmarshal(plData, &pl); err != nil {
+						return false
 					}
 					allPostings = append(allPostings, pl.Postings...)
+					found = true
 				}
-			} else {
-				plData := idxBucket.Get([]byte(term))
-				if plData == nil {
-					continue
+				if found {
+					dfData := dfBucket.Get([]byte(t))
+					var nDocWithTerm uint64
+					if dfData != nil {
+						nDocWithTerm = decUint64(dfData)
+					}
+					termIDF = idf(N, nDocWithTerm)
 				}
-				var pl PostingList
-				if err := msgpack.Unmarshal(plData, &pl); err != nil {
-					continue
-				}
-				allPostings = pl.Postings
+				return found
 			}
 
-			dfData := dfBucket.Get([]byte(term))
-			var nDocWithTerm uint64
-			if dfData != nil {
-				nDocWithTerm = decUint64(dfData)
-			} else {
-				nDocWithTerm = 0
+			if !collect(term) && fuzzy && !prefix {
+				e.buildBKTree()
+				if e.bkTree != nil {
+					candidates := e.bkTree.search(term, 2)
+					for _, c := range candidates {
+						if c != term {
+							collect(c)
+						}
+					}
+				}
 			}
-			idfVal := idf(N, nDocWithTerm)
 
 			for _, posting := range allPostings {
 				docLenData := docLenBucket.Get(encUint64(posting.DocID))
@@ -84,7 +102,7 @@ func (e *SearchEngine) Search(query string, mode string, limit int, offset int, 
 					docLen = decUint64(docLenData)
 				}
 
-				score := bm25Score(posting.TF, docLen, avgdl, idfVal)
+				score := bm25Score(posting.TF, docLen, avgdl, termIDF)
 
 				sd, exists := scoredDocs[posting.DocID]
 				if !exists {
@@ -392,4 +410,28 @@ func (e *SearchEngine) ScanBucket(bucketName string) ([]string, [][]string, erro
 	})
 
 	return headers, rows, err
+}
+
+func (e *SearchEngine) buildBKTree() {
+	if e.bkBuilt {
+		return
+	}
+	e.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketDF))
+		if b == nil {
+			return nil
+		}
+		first := true
+		return b.ForEach(func(k, v []byte) error {
+			term := string(k)
+			if first {
+				e.bkTree = &bkNode{term: term}
+				first = false
+			} else {
+				e.bkTree.insert(term)
+			}
+			return nil
+		})
+	})
+	e.bkBuilt = true
 }

@@ -122,6 +122,7 @@ func usage() {
 		"   " + cFlag + "-n, --limit <N>" + cRst + "    返回条数 (默认: 10, browse 默认 20)\n" +
 		"   " + cFlag + "--mode <and|or>" + cRst + "    搜索模式 (默认: or)\n" +
 		"   " + cFlag + "--prefix" + cRst + "           启用前缀匹配\n" +
+		"   " + cFlag + "--fuzzy" + cRst + "            启用模糊搜索\n" +
 		"   " + cFlag + "--format <fmt>" + cRst + "     输出格式: print/json/jsonl/csv (默认: print)\n",
 	)
 }
@@ -132,6 +133,7 @@ type parsedArgs struct {
 	limit      int
 	mode       string
 	prefix     bool
+	fuzzy      bool
 	format     string
 	showHelp   bool
 }
@@ -170,6 +172,9 @@ func parse(args []string) parsedArgs {
 			}
 		case "--prefix":
 			pa.prefix = true
+			i++
+		case "--fuzzy":
+			pa.fuzzy = true
 			i++
 		case "--format":
 			if i+1 < len(args) {
@@ -243,7 +248,7 @@ func cmdSearch(args []string) {
 
 	if len(pa.positional) < 1 {
 		log.Error("缺少查询词")
-		fmt.Println("用法: " + cApp + "boltsearch" + cRst + " " + cApp + "search" + cRst + " <查询词> " + cFlag + "[-n <N>] [--mode <and|or>] [--prefix] [--format <fmt>]" + cRst)
+		fmt.Println("用法: " + cApp + "boltsearch" + cRst + " " + cApp + "search" + cRst + " <查询词> " + cFlag + "[-n <N>] [--mode <and|or>] [--prefix] [--fuzzy] [--format <fmt>]" + cRst)
 		os.Exit(1)
 	}
 	query := pa.positional[0]
@@ -261,7 +266,7 @@ func cmdSearch(args []string) {
 	defer eng.Close()
 
 	start := time.Now()
-	results, totalHits, err := eng.Search(query, pa.mode, pa.limit, 0, pa.prefix)
+	results, totalHits, err := eng.Search(query, pa.mode, pa.limit, 0, pa.prefix, pa.fuzzy)
 	if err != nil {
 		log.Error(err.Error())
 		os.Exit(1)
@@ -763,6 +768,7 @@ func helpSearch() {
 			{cFlag + "-n, --limit <N>" + cRst, "", "返回结果数 (默认: 10)"},
 			{cFlag + "--mode <and|or>" + cRst, "", "搜索模式 (默认: or)"},
 			{cFlag + "--prefix" + cRst, "", "启用前缀匹配"},
+			{cFlag + "--fuzzy" + cRst, "", "启用模糊搜索（编辑距离纠错）"},
 			{cFlag + "--format <fmt>" + cRst, "", "输出格式: print/json/jsonl/csv"},
 		})
 }

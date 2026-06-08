@@ -28,6 +28,7 @@
         <label><input type="radio" name="mode" value="or" checked> OR</label>
         <label><input type="radio" name="mode" value="and"> AND</label>
         <label><input type="checkbox" id="prefix" checked> 前缀</label>
+        <label><input type="checkbox" id="fuzzy"> 模糊</label>
         <select id="limit">
           <option>5</option><option selected>10</option><option>20</option><option>50</option>
         </select>
@@ -188,9 +189,11 @@ async function doSearch() {
   if (!q) return;
   const mode = document.querySelector('input[name=mode]:checked').value;
   const prefix = document.getElementById('prefix').checked;
+  const fuzzy = document.getElementById('fuzzy').checked;
   const limit = document.getElementById('limit').value;
   const params = new URLSearchParams({q, mode, limit});
   if (prefix) params.set('prefix', 'true');
+  if (fuzzy) params.set('fuzzy', 'true');
   try {
     const r = await fetch(API + '/search?' + params);
     const d = await r.json();
