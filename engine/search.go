@@ -307,18 +307,41 @@ func (e *SearchEngine) Suggest(prefix string, limit int) ([]string, error) {
 		searchPrefix = tokens[0].Term
 	}
 
-	var suggestions []string
+	type candidate struct {
+		term string
+		df   uint64
+	}
+	var candidates []candidate
 	err := e.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucketIndex))
-		c := b.Cursor()
+		idxBucket := tx.Bucket([]byte(bucketIndex))
+		dfBucket := tx.Bucket([]byte(bucketDF))
+		c := idxBucket.Cursor()
 		for k, _ := c.Seek([]byte(searchPrefix)); k != nil && strings.HasPrefix(string(k), searchPrefix); k, _ = c.Next() {
-			suggestions = append(suggestions, string(k))
-			if limit > 0 && len(suggestions) >= limit {
+			term := string(k)
+			var df uint64
+			if d := dfBucket.Get(k); d != nil {
+				df = decUint64(d)
+			}
+			candidates = append(candidates, candidate{term, df})
+			if limit > 0 && len(candidates) >= limit*3 {
 				break
 			}
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].df > candidates[j].df })
+
+	var suggestions []string
+	for i, c := range candidates {
+		if limit > 0 && i >= limit {
+			break
+		}
+		suggestions = append(suggestions, c.term)
+	}
 	return suggestions, err
 }
 
