@@ -3,10 +3,13 @@ package engine
 import (
 	"encoding/binary"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/vmihailenco/msgpack/v5"
-	"github.com/boltdb/bolt"
+	bolt "go.etcd.io/bbolt"
 )
 
 const (
@@ -20,12 +23,14 @@ const (
 )
 
 type SearchEngine struct {
-	db        *bolt.DB
-	dbPath    string
-	tokenizer *Tokenizer
-	bkTree    *bkNode
-	bkBuilt   bool
-	mu        sync.Mutex
+	db          *bolt.DB
+	dbPath      string
+	tokenizer   *Tokenizer
+	bkTree      *bkNode
+	bkBuilt     bool
+	phraseIdx   *phraseIndex
+	phraseBuilt bool
+	mu          sync.Mutex
 }
 
 func encUint64(v uint64) []byte {
@@ -38,8 +43,32 @@ func decUint64(b []byte) uint64 {
 	return binary.BigEndian.Uint64(b)
 }
 
+// matchMeta 判断文档元数据是否包含过滤条件的全部键值对。
+func matchMeta(meta map[string]string, filter map[string]string) bool {
+	for k, v := range filter {
+		if meta[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// formatMeta 把文档元数据格式化为 key=value 列表，按键排序。
+func formatMeta(meta map[string]string) string {
+	keys := make([]string, 0, len(meta))
+	for k := range meta {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+meta[k])
+	}
+	return strings.Join(parts, ",")
+}
+
 func NewSearchEngine(dbPath string) (*SearchEngine, error) {
-	db, err := bolt.Open(dbPath, 0o600, &bolt.Options{Timeout: 0})
+	db, err := bolt.Open(dbPath, 0o600, &bolt.Options{Timeout: 3 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}

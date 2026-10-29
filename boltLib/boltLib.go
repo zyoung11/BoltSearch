@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	bolt "github.com/boltdb/bolt"
+	bolt "go.etcd.io/bbolt"
 )
 
 type KeyType string

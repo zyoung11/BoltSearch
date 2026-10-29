@@ -1,9 +1,10 @@
 package engine
 
 type Document struct {
-	ID      uint64 `msgpack:"id"`
-	Title   string `msgpack:"title"`
-	Content string `msgpack:"content"`
+	ID      uint64            `msgpack:"id"`
+	Title   string            `msgpack:"title"`
+	Content string            `msgpack:"content"`
+	Meta    map[string]string `msgpack:"meta"`
 }
 
 type Token struct {
@@ -34,10 +35,21 @@ type ScoredDoc struct {
 	MatchCount int
 }
 
+// SearchOptions 保存一次搜索的全部选项。
+type SearchOptions struct {
+	Mode       string
+	Limit      int
+	Offset     int
+	Prefix     bool
+	Fuzzy      bool
+	Phrase     bool
+	MetaFilter map[string]string
+}
+
 type Stats struct {
-	TotalDocs    uint64
-	TotalTokens  uint64
-	AvgDocLen    float64
-	UniqueTerms  int
-	DBFileSize   int64
+	TotalDocs   uint64
+	TotalTokens uint64
+	AvgDocLen   float64
+	UniqueTerms int
+	DBFileSize  int64
 }

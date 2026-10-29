@@ -109,10 +109,7 @@ func usage() {
 		if l.args != "" {
 			cmdPart += " " + l.args
 		}
-		pad := maxArgs - lipgloss.Width(cmdPart)
-		if pad < 0 {
-			pad = 0
-		}
+		pad := max(maxArgs-lipgloss.Width(cmdPart), 0)
 		fmt.Printf("   "+cApp+"boltsearch"+cRst+" "+cApp+"%s"+cRst+"%s "+cCmd+"%s"+cRst+"\n",
 			cmdPart, strings.Repeat(" ", pad), l.desc)
 	}
@@ -123,6 +120,8 @@ func usage() {
 		"   " + cFlag + "--mode <and|or>" + cRst + "    搜索模式 (默认: or)\n" +
 		"   " + cFlag + "--prefix" + cRst + "           启用前缀匹配\n" +
 		"   " + cFlag + "--fuzzy" + cRst + "            启用模糊搜索\n" +
+		"   " + cFlag + "--phrase" + cRst + "           启用短语加分\n" +
+		"   " + cFlag + "--meta k=v" + cRst + "        按元数据过滤 key=value (可重复)\n" +
 		"   " + cFlag + "--format <fmt>" + cRst + "     输出格式: print/json/jsonl/csv (默认: print)\n",
 	)
 }
@@ -134,6 +133,8 @@ type parsedArgs struct {
 	mode       string
 	prefix     bool
 	fuzzy      bool
+	phrase     bool
+	meta       map[string]string
 	format     string
 	showHelp   bool
 }
@@ -176,6 +177,21 @@ func parse(args []string) parsedArgs {
 		case "--fuzzy":
 			pa.fuzzy = true
 			i++
+		case "--phrase":
+			pa.phrase = true
+			i++
+		case "--meta":
+			if i+1 < len(args) {
+				if k, v, ok := strings.Cut(args[i+1], "="); ok {
+					if pa.meta == nil {
+						pa.meta = make(map[string]string)
+					}
+					pa.meta[k] = v
+				}
+				i += 2
+			} else {
+				i++
+			}
 		case "--format":
 			if i+1 < len(args) {
 				pa.format = args[i+1]
@@ -248,7 +264,7 @@ func cmdSearch(args []string) {
 
 	if len(pa.positional) < 1 {
 		log.Error("缺少查询词")
-		fmt.Println("用法: " + cApp + "boltsearch" + cRst + " " + cApp + "search" + cRst + " <查询词> " + cFlag + "[-n <N>] [--mode <and|or>] [--prefix] [--fuzzy] [--format <fmt>]" + cRst)
+		fmt.Println("用法: " + cApp + "boltsearch" + cRst + " " + cApp + "search" + cRst + " <查询词> " + cFlag + "[-n <N>] [--mode <and|or>] [--prefix] [--fuzzy] [--phrase] [--meta k=v] [--format <fmt>]" + cRst)
 		os.Exit(1)
 	}
 	query := pa.positional[0]
@@ -266,7 +282,15 @@ func cmdSearch(args []string) {
 	defer eng.Close()
 
 	start := time.Now()
-	results, totalHits, err := eng.Search(query, pa.mode, pa.limit, 0, pa.prefix, pa.fuzzy)
+	results, totalHits, err := eng.Search(query, engine.SearchOptions{
+		Mode:       pa.mode,
+		Limit:      pa.limit,
+		Offset:     0,
+		Prefix:     pa.prefix,
+		Fuzzy:      pa.fuzzy,
+		Phrase:     pa.phrase,
+		MetaFilter: pa.meta,
+	})
 	if err != nil {
 		log.Error(err.Error())
 		os.Exit(1)
@@ -276,6 +300,9 @@ func cmdSearch(args []string) {
 	modeLabel := strings.ToUpper(pa.mode)
 	if pa.prefix {
 		modeLabel += " (前缀)"
+	}
+	if pa.phrase {
+		modeLabel += " (短语)"
 	}
 
 	switch pa.format {
@@ -739,10 +766,7 @@ func helpTable(title, desc string, usageLines, paramLines [][3]string) {
 
 		for _, r := range rows {
 			cmdPart := r.name + r.args
-			pad := maxW - lipgloss.Width(cmdPart)
-			if pad < 0 {
-				pad = 0
-			}
+			pad := max(maxW-lipgloss.Width(cmdPart), 0)
 			fmt.Printf("  "+cApp+"%s"+cRst+"%s%s "+cCmd+"%s"+cRst+"\n",
 				cmdPart, strings.Repeat(" ", pad), "", r.desc)
 		}
@@ -769,6 +793,8 @@ func helpSearch() {
 			{cFlag + "--mode <and|or>" + cRst, "", "搜索模式 (默认: or)"},
 			{cFlag + "--prefix" + cRst, "", "启用前缀匹配"},
 			{cFlag + "--fuzzy" + cRst, "", "启用模糊搜索（编辑距离纠错）"},
+			{cFlag + "--phrase" + cRst, "", "启用短语加分（字面与切片覆盖）"},
+			{cFlag + "--meta k=v" + cRst, "", "按元数据过滤 key=value（可重复）"},
 			{cFlag + "--format <fmt>" + cRst, "", "输出格式: print/json/jsonl/csv"},
 		})
 }
@@ -827,6 +853,7 @@ func helpAdd() {
 		[][3]string{
 			{cFlag + "--title <text>" + cRst, "", "文档标题"},
 			{cFlag + "--content <text>" + cRst, "", "文档正文"},
+			{cFlag + "--meta k=v" + cRst, "", "文档元数据 key=value（可重复）"},
 			{cFlag + "--db <path>" + cRst, "", "数据库路径 (默认: ./search.db)"},
 		},
 		nil)
@@ -861,6 +888,7 @@ func cmdAdd(args []string) {
 	title := ""
 	content := ""
 	dbPath := "search.db"
+	var meta map[string]string
 
 	i := 0
 	for i < len(args) {
@@ -889,6 +917,18 @@ func cmdAdd(args []string) {
 			} else {
 				i++
 			}
+		case "--meta":
+			if i+1 < len(args) {
+				if k, v, ok := strings.Cut(args[i+1], "="); ok {
+					if meta == nil {
+						meta = make(map[string]string)
+					}
+					meta[k] = v
+				}
+				i += 2
+			} else {
+				i++
+			}
 		default:
 			i++
 		}
@@ -896,7 +936,7 @@ func cmdAdd(args []string) {
 
 	if title == "" || content == "" {
 		log.Error("缺少 --title 或 --content")
-		fmt.Println("用法: " + cApp + "boltsearch" + cRst + " " + cApp + "add" + cRst + " " + cFlag + "--title" + cRst + " \"标题\" " + cFlag + "--content" + cRst + " \"正文\" " + cFlag + "[--db <path>]" + cRst)
+		fmt.Println("用法: " + cApp + "boltsearch" + cRst + " " + cApp + "add" + cRst + " " + cFlag + "--title" + cRst + " \"标题\" " + cFlag + "--content" + cRst + " \"正文\" " + cFlag + "[--meta k=v]" + cRst + " " + cFlag + "[--db <path>]" + cRst)
 		os.Exit(1)
 	}
 
@@ -907,7 +947,7 @@ func cmdAdd(args []string) {
 	}
 	defer eng.Close()
 
-	docID, err := eng.AddDocument(title, content)
+	docID, err := eng.AddDocument(engine.Document{Title: title, Content: content, Meta: meta})
 	if err != nil {
 		log.Error(err.Error())
 		os.Exit(1)
@@ -977,10 +1017,7 @@ func cmdServe(args []string) {
 		}
 	}
 	for _, e := range endpoints {
-		pad := maxP - lipgloss.Width(e.p)
-		if pad < 0 {
-			pad = 0
-		}
+		pad := max(maxP-lipgloss.Width(e.p), 0)
 		fmt.Printf("  %-6s %s%s %s\n", e.m, e.p, strings.Repeat(" ", pad), e.d)
 	}
 	fmt.Println()

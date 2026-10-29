@@ -6,24 +6,81 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/vmihailenco/msgpack/v5"
-	"github.com/boltdb/bolt"
+	bolt "go.etcd.io/bbolt"
 )
 
-func (e *SearchEngine) Search(query string, mode string, limit int, offset int, prefix bool, fuzzy bool) ([]ScoredDoc, int, error) {
-	tokens := e.tokenizer.Tokenize(query)
-	if len(tokens) == 0 {
-		return nil, 0, nil
-	}
+const (
+	fuzzyWeight   = 0.35
+	fuzzyMaxTerms = 4
+)
 
-	uniqueTerms := make(map[string]bool)
-	var queryTerms []string
-	for _, t := range tokens {
-		if !uniqueTerms[t.Term] {
-			uniqueTerms[t.Term] = true
-			queryTerms = append(queryTerms, t.Term)
+// PreparedQuery 保存一次解析完成的查询，包含去重后的查询词与模糊候选。
+type PreparedQuery struct {
+	Query string
+	Terms []string
+	Fuzzy map[string][]string
+}
+
+// Prepare 对查询做分词和模糊候选解析，结果可复用于多次 SearchPrepared 调用。
+func (e *SearchEngine) Prepare(query string) *PreparedQuery {
+	pq := &PreparedQuery{Query: query, Fuzzy: make(map[string][]string)}
+	seen := make(map[string]bool)
+	for _, t := range e.tokenizer.Tokenize(query) {
+		if !seen[t.Term] {
+			seen[t.Term] = true
+			pq.Terms = append(pq.Terms, t.Term)
 		}
+	}
+	if len(pq.Terms) == 0 {
+		return pq
+	}
+	e.ensureBKTree()
+	if e.bkTree == nil {
+		return pq
+	}
+	for _, term := range pq.Terms {
+		maxDist := 2
+		if utf8.RuneCountInString(term) <= 2 {
+			maxDist = 1
+		}
+		candidates := e.bkTree.search(term, maxDist)
+		sort.Strings(candidates)
+		list := make([]string, 0, len(candidates))
+		for _, c := range candidates {
+			if c != term {
+				list = append(list, c)
+			}
+		}
+		pq.Fuzzy[term] = list
+	}
+	return pq
+}
+
+// QueryTerms 返回查询分词去重后的词项，供上层做命中高亮。
+func (e *SearchEngine) QueryTerms(query string) []string {
+	var terms []string
+	seen := make(map[string]bool)
+	for _, t := range e.tokenizer.Tokenize(query) {
+		if !seen[t.Term] {
+			seen[t.Term] = true
+			terms = append(terms, t.Term)
+		}
+	}
+	return terms
+}
+
+// Search 解析查询并执行一次搜索，返回结果页与命中总数。
+func (e *SearchEngine) Search(query string, opts SearchOptions) ([]ScoredDoc, int, error) {
+	return e.SearchPrepared(e.Prepare(query), opts)
+}
+
+// SearchPrepared 用预备好的查询执行搜索，返回结果页与命中总数。
+func (e *SearchEngine) SearchPrepared(pq *PreparedQuery, opts SearchOptions) ([]ScoredDoc, int, error) {
+	if len(pq.Terms) == 0 {
+		return nil, 0, nil
 	}
 
 	scoredDocs := make(map[uint64]*ScoredDoc)
@@ -43,14 +100,33 @@ func (e *SearchEngine) Search(query string, mode string, limit int, offset int, 
 		idxBucket := tx.Bucket([]byte(bucketIndex))
 		dfBucket := tx.Bucket([]byte(bucketDF))
 		docLenBucket := tx.Bucket([]byte(bucketDocLen))
+		docBucket := tx.Bucket([]byte(bucketDocs))
 
-		for _, term := range queryTerms {
+		filterCache := make(map[uint64]bool)
+		passFilter := func(docID uint64) bool {
+			if len(opts.MetaFilter) == 0 {
+				return true
+			}
+			if ok, hit := filterCache[docID]; hit {
+				return ok
+			}
+			ok := false
+			var doc Document
+			if data := docBucket.Get(encUint64(docID)); data != nil && msgpack.Unmarshal(data, &doc) == nil {
+				ok = matchMeta(doc.Meta, opts.MetaFilter)
+			}
+			filterCache[docID] = ok
+			return ok
+		}
+
+		for _, term := range pq.Terms {
 			var allPostings []Posting
 			termIDF := idf(N, 0)
+			weight := 1.0
 
 			collect := func(t string) bool {
 				var found bool
-				if prefix {
+				if opts.Prefix {
 					c := idxBucket.Cursor()
 					for k, v := c.Seek([]byte(t)); k != nil && strings.HasPrefix(string(k), t); k, v = c.Next() {
 						var pl PostingList
@@ -83,26 +159,30 @@ func (e *SearchEngine) Search(query string, mode string, limit int, offset int, 
 				return found
 			}
 
-			if !collect(term) && fuzzy && !prefix {
-				e.ensureBKTree()
-				if e.bkTree != nil {
-					candidates := e.bkTree.search(term, 2)
-					for _, c := range candidates {
-						if c != term {
-							collect(c)
+			if !collect(term) && opts.Fuzzy {
+				collected := 0
+				for _, c := range pq.Fuzzy[term] {
+					if collect(c) {
+						weight = fuzzyWeight
+						collected++
+						if collected >= fuzzyMaxTerms {
+							break
 						}
 					}
 				}
 			}
 
 			for _, posting := range allPostings {
+				if !passFilter(posting.DocID) {
+					continue
+				}
 				docLenData := docLenBucket.Get(encUint64(posting.DocID))
 				var docLen uint64
 				if docLenData != nil {
 					docLen = decUint64(docLenData)
 				}
 
-				score := bm25Score(posting.TF, docLen, avgdl, termIDF)
+				score := bm25Score(posting.TF, docLen, avgdl, termIDF) * weight
 
 				sd, exists := scoredDocs[posting.DocID]
 				if !exists {
@@ -130,10 +210,14 @@ func (e *SearchEngine) Search(query string, mode string, limit int, offset int, 
 		for _, t := range sd.MatchedOn {
 			matchedTerms[t] = true
 		}
-		if mode == "and" && len(matchedTerms) < len(queryTerms) {
+		if opts.Mode == "and" && len(matchedTerms) < len(pq.Terms) {
 			continue
 		}
 		filtered = append(filtered, sd)
+	}
+
+	if opts.Phrase {
+		filtered = e.applyPhraseBonus(pq.Query, filtered, opts)
 	}
 
 	sort.Slice(filtered, func(i, j int) bool {
@@ -145,11 +229,11 @@ func (e *SearchEngine) Search(query string, mode string, limit int, offset int, 
 
 	totalHits := len(filtered)
 
-	if offset >= len(filtered) {
+	if opts.Offset >= len(filtered) {
 		return nil, totalHits, nil
 	}
-	end := min(offset+limit, len(filtered))
-	results := filtered[offset:end]
+	end := min(opts.Offset+opts.Limit, len(filtered))
+	results := filtered[opts.Offset:end]
 
 	for _, sd := range results {
 		if err := e.db.View(func(tx *bolt.Tx) error {
@@ -168,6 +252,35 @@ func (e *SearchEngine) Search(query string, mode string, limit int, offset int, 
 		docs[i] = *sd
 	}
 	return docs, totalHits, nil
+}
+
+// applyPhraseBonus 把短语通道加分合并进词项结果，or 模式下补入纯短语命中。
+func (e *SearchEngine) applyPhraseBonus(query string, scored []*ScoredDoc, opts SearchOptions) []*ScoredDoc {
+	index := e.ensurePhraseIndex()
+	if index == nil {
+		return scored
+	}
+	bonus := index.bonuses(query)
+	for _, sd := range scored {
+		if extra, ok := bonus[sd.Doc.ID]; ok {
+			sd.Score += extra
+			delete(bonus, sd.Doc.ID)
+		}
+	}
+	if opts.Mode == "and" {
+		return scored
+	}
+	for _, entry := range index.entries {
+		extra, ok := bonus[entry.doc.ID]
+		if !ok {
+			continue
+		}
+		if !matchMeta(entry.doc.Meta, opts.MetaFilter) {
+			continue
+		}
+		scored = append(scored, &ScoredDoc{Doc: entry.doc, Score: extra})
+	}
+	return scored
 }
 
 func (e *SearchEngine) DeleteDocument(docID uint64) error {
@@ -253,9 +366,13 @@ func (e *SearchEngine) DeleteDocument(docID uint64) error {
 		meta.TotalTokens -= docLen
 		return e.setMeta(tx, meta)
 	})
-	if removed > 0 {
+	if err == nil {
 		e.mu.Lock()
-		e.bkBuilt = false
+		e.phraseIdx = nil
+		e.phraseBuilt = false
+		if removed > 0 {
+			e.bkBuilt = false
+		}
 		e.mu.Unlock()
 	}
 	return err
@@ -357,7 +474,7 @@ func (e *SearchEngine) ScanBucket(bucketName string) ([]string, [][]string, erro
 
 		switch bucketName {
 		case bucketDocs:
-			headers = []string{"DocID", "Title", "Content"}
+			headers = []string{"DocID", "Title", "Content", "Meta"}
 			return b.ForEach(func(k, v []byte) error {
 				id := decUint64(k)
 				var doc Document
@@ -366,6 +483,7 @@ func (e *SearchEngine) ScanBucket(bucketName string) ([]string, [][]string, erro
 					fmt.Sprintf("%d", id),
 					doc.Title,
 					doc.Content,
+					formatMeta(doc.Meta),
 				})
 				return nil
 			})
@@ -471,4 +589,42 @@ func (e *SearchEngine) ensureBKTree() {
 	if !e.bkBuilt {
 		e.buildBKTree()
 	}
+}
+
+// ensurePhraseIndex 返回短语索引，首次使用时构建，文档变更后重建。
+func (e *SearchEngine) ensurePhraseIndex() *phraseIndex {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.phraseBuilt {
+		return e.phraseIdx
+	}
+	docs, err := e.AllDocuments()
+	if err != nil {
+		return nil
+	}
+	e.phraseIdx = newPhraseIndex(docs)
+	e.phraseBuilt = true
+	return e.phraseIdx
+}
+
+// AllDocuments 返回全部已索引文档，供上层做原文比对。
+func (e *SearchEngine) AllDocuments() ([]Document, error) {
+	var docs []Document
+	err := e.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket([]byte(bucketDocs)).ForEach(func(k, v []byte) error {
+			var doc Document
+			if err := msgpack.Unmarshal(v, &doc); err != nil {
+				return err
+			}
+			doc.ID = decUint64(k)
+			docs = append(docs, doc)
+			return nil
+		})
+	})
+	return docs, err
+}
+
+// WarmUp 提前构建 BK-Tree，把惰性构建成本从首个查询挪到调用时刻。
+func (e *SearchEngine) WarmUp() {
+	e.ensureBKTree()
 }

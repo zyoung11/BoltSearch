@@ -1,6 +1,6 @@
 # BoltSearch
 
-基于 **BoltDB** 的轻量级全文搜索引擎，内置 **BM25** 评分、**中英文分词**、**BK-Tree 模糊纠错**、**RESTful API**。
+基于 **bbolt** 轻量级全文搜索引擎，内置 **BM25** 评分、**中英文分词**、**BK-Tree 模糊纠错**、**短语加分**、**RESTful API**。
 
 ## 目录
 
@@ -44,13 +44,26 @@ score(q,d) = Σ IDF(t) × (TF × (k1+1)) / (TF + k1×(1−b + b×|d|/avgdl))
 - `k1=1.2` 控制 TF 饱和速度
 - `b=0.75` 控制文档长度惩罚
 - `IDF(t)` 来自 `df` Bucket，稀有词得分高
+- 标题词项的 TF 按 3 倍计入，标题命中得分更高
+- 模糊纠错命中按 0.35 加权，精确命中不受影响
+
+### 短语加分
+
+启用 `--phrase` 后，引擎在 BM25 之上叠加短语通道加分：
+
+- 查询原文命中（忽略标点和大小写）加 1000 分
+- 查询二元切片（bigram）覆盖不低于 50% 时，加 300 分乘覆盖度平方
+
+短语加分修正 BM25 只看词频、不看词序的缺陷。`or` 模式下纯短语命中也进入结果。`and` 模式下只给词项命中的结果加分。
 
 ### 模糊搜索
 
 基于 **BK-Tree** + **Levenshtein 编辑距离**（以 Unicode 字符为单位，支持中英文）：
 
 - 精确命中时不走模糊路径，零开销
-- 未命中时查找编辑距离 ≤ 2 的候选词，用候选词走倒排索引
+- 未命中时查找编辑距离内的候选词，用候选词走倒排索引
+- 编辑距离上限按词长取值：词长不超过 2 时取 1，其余取 2
+- 候选词命中按 0.35 加权，最多使用 4 个候选词
 - BK-Tree 在索引时增量构建，搜索路径纯读无写
 
 ```
@@ -59,7 +72,7 @@ score(q,d) = Σ IDF(t) × (TF × (k1+1)) / (TF + k1×(1−b + b×|d|/avgdl))
 
 ### 操作模型
 
-所有操作基于 BoltDB 事务，**增量写入**，无需全量重建：
+所有操作基于 bbolt 事务，**增量写入**，无需全量重建：
 
 - 新增文档 → 单事务追加，不动已有数据
 - 删除文档 → 单事务移除，其余索引不受影响
@@ -104,9 +117,10 @@ boltsearch index data.jsonl --db mydata.db
 
 ```bash
 boltsearch add --title "标题" --content "正文内容"
+boltsearch add --title "标题" --content "正文内容" --meta kind=subject
 ```
 
-重复自动跳过。
+重复自动跳过。`--meta key=value` 用于附加元数据，可重复传入。
 
 ### 搜索
 
@@ -115,8 +129,12 @@ boltsearch search "xxx"
 boltsearch search "xxx" --mode and
 boltsearch search "xxx" --prefix
 boltsearch search "xxx" --fuzzy
+boltsearch search "xxx" --phrase
+boltsearch search "xxx" --meta kind=subject
 boltsearch search "xxx" -n 20
 ```
+
+`--meta key=value` 按元数据过滤结果，可重复传入。多个条件同时传入时，文档必须全部满足。
 
 ### 删除
 
@@ -219,9 +237,12 @@ boltsearch serve --addr 8080
 ```json
 {
   "title": "文档标题",
-  "content": "文档正文"
+  "content": "文档正文",
+  "meta": { "kind": "subject", "source": "manual" }
 }
 ```
+
+`meta` 可选，值为字符串键值对，用于搜索过滤。
 
 **响应** `201`：
 
@@ -251,6 +272,8 @@ boltsearch serve --addr 8080
 | `offset` | int | `0` | 偏移量 |
 | `prefix` | bool | `false` | 前缀匹配 |
 | `fuzzy` | bool | `false` | 模糊纠错 |
+| `phrase` | bool | `false` | 短语加分 |
+| `meta.<key>` | string | — | 按元数据过滤，键值精确匹配，可重复 |
 
 **响应** `200`：
 
@@ -264,7 +287,8 @@ boltsearch serve --addr 8080
       "Doc": {
         "ID": 1,
         "Title": "xxxx",
-        "Content": "xxxx..."
+        "Content": "xxxx...",
+        "Meta": { "kind": "subject" }
       },
       "Score": 2.24,
       "MatchedOn": ["xxx"],
@@ -378,10 +402,11 @@ boltsearch serve --addr 8080
 每行一个独立的 JSON 对象，必须包含 `title` 和 `content`：
 
 ```jsonl
-{"title": "文档标题", "content": "文档正文，中英文均可"}
+{"title": "文档标题", "content": "文档正文，中英文均可", "meta": {"kind": "subject"}}
 {"title": "Another Doc", "content": "English content is also supported"}
 ```
 
 - 空 `title` 且空 `content` 的行自动跳过
+- `meta` 可选，值为字符串键值对，用于搜索过滤
 - 支持流式读取，百万行级别无内存压力
 - 重复文档自动跳过（基于 Title + Content 的 SHA256）

@@ -7,7 +7,7 @@ import (
 	"io"
 
 	"github.com/vmihailenco/msgpack/v5"
-	"github.com/boltdb/bolt"
+	bolt "go.etcd.io/bbolt"
 )
 
 type termInfo struct {
@@ -63,8 +63,9 @@ func (e *SearchEngine) IndexFile(r io.Reader) (int, string, error) {
 	return indexed, summary, nil
 }
 
-func (e *SearchEngine) AddDocument(title, content string) (uint64, error) {
-	return e.indexOne(Document{Title: title, Content: content})
+// AddDocument 索引单篇文档并返回文档 ID，重复文档返回 0。
+func (e *SearchEngine) AddDocument(doc Document) (uint64, error) {
+	return e.indexOne(doc)
 }
 
 func docHash(title, content string) []byte {
@@ -75,10 +76,18 @@ func docHash(title, content string) []byte {
 func (e *SearchEngine) indexOne(doc Document) (uint64, error) {
 	hash := docHash(doc.Title, doc.Content)
 
-	tokens := e.tokenizer.Tokenize(doc.Title + " " + doc.Content)
+	titleTokens := e.tokenizer.Tokenize(doc.Title)
+	contentTokens := e.tokenizer.Tokenize(doc.Content)
+	tokens := append(titleTokens, contentTokens...)
 
 	termStats := make(map[string]termInfo)
-	for _, t := range tokens {
+	for _, t := range titleTokens {
+		info := termStats[t.Term]
+		info.frequency += 3
+		info.positions = append(info.positions, t.Position)
+		termStats[t.Term] = info
+	}
+	for _, t := range contentTokens {
 		info := termStats[t.Term]
 		info.frequency++
 		info.positions = append(info.positions, t.Position)
@@ -163,11 +172,15 @@ func (e *SearchEngine) indexOne(doc Document) (uint64, error) {
 		return 0, err
 	}
 
-	if len(newTerms) > 0 {
+	if docID != 0 {
 		e.mu.Lock()
-		e.ensureBKTree()
-		for _, t := range newTerms {
-			e.bkTree.insert(t)
+		e.phraseIdx = nil
+		e.phraseBuilt = false
+		if len(newTerms) > 0 {
+			e.ensureBKTree()
+			for _, t := range newTerms {
+				e.bkTree.insert(t)
+			}
 		}
 		e.mu.Unlock()
 	}

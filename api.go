@@ -44,8 +44,9 @@ func setupAPI(eng *engine.SearchEngine) *fiber.App {
 
 	api.Post("/docs", func(c *fiber.Ctx) error {
 		var body struct {
-			Title   string `json:"title"`
-			Content string `json:"content"`
+			Title   string            `json:"title"`
+			Content string            `json:"content"`
+			Meta    map[string]string `json:"meta"`
 		}
 		if err := c.BodyParser(&body); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "无效的 JSON"})
@@ -53,7 +54,7 @@ func setupAPI(eng *engine.SearchEngine) *fiber.App {
 		if body.Title == "" || body.Content == "" {
 			return c.Status(400).JSON(fiber.Map{"error": "title 和 content 不能为空"})
 		}
-		docID, err := eng.AddDocument(body.Title, body.Content)
+		docID, err := eng.AddDocument(engine.Document{Title: body.Title, Content: body.Content, Meta: body.Meta})
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
@@ -73,8 +74,27 @@ func setupAPI(eng *engine.SearchEngine) *fiber.App {
 		offset, _ := strconv.Atoi(c.Query("offset", "0"))
 		prefix := c.Query("prefix") == "true"
 		fuzzy := c.Query("fuzzy") == "true"
+		phrase := c.Query("phrase") == "true"
+		metaFilter := map[string]string{}
+		c.Context().QueryArgs().VisitAll(func(key, value []byte) {
+			k := string(key)
+			if strings.HasPrefix(k, "meta.") && len(k) > 5 {
+				metaFilter[k[5:]] = string(value)
+			}
+		})
+		if len(metaFilter) == 0 {
+			metaFilter = nil
+		}
 
-		results, total, err := eng.Search(q, mode, limit, offset, prefix, fuzzy)
+		results, total, err := eng.Search(q, engine.SearchOptions{
+			Mode:       mode,
+			Limit:      limit,
+			Offset:     offset,
+			Prefix:     prefix,
+			Fuzzy:      fuzzy,
+			Phrase:     phrase,
+			MetaFilter: metaFilter,
+		})
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
